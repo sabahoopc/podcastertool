@@ -1,667 +1,838 @@
-<!DOCTYPE html>
-<html lang="ar" dir="rtl">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>استوديو البودكاست</title>
-<link href="https://fonts.googleapis.com/css2?family=Noto+Kufi+Arabic:wght@400;600;700&display=swap" rel="stylesheet">
-<style>
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
-body{background:#0a0a0f;font-family:'Noto Kufi Arabic',sans-serif;direction:rtl;color:#e8e4d8;min-height:100vh;}
-input,textarea,select{font-family:'Noto Kufi Arabic',sans-serif;}
-textarea:focus,input:focus,select:focus{border-color:#c8a96e!important;outline:none;}
-::-webkit-scrollbar{width:5px;}
-::-webkit-scrollbar-track{background:#12121a;}
-::-webkit-scrollbar-thumb{background:#2a2a3e;border-radius:3px;}
-button{transition:opacity 0.15s;cursor:pointer;font-family:'Noto Kufi Arabic',sans-serif;}
-button:hover:not(:disabled){opacity:0.82;}
-@keyframes spin{to{transform:rotate(360deg);}}
-</style>
-</head>
-<body>
-<div id="root"></div>
-<script>
-const C={bg:"#0a0a0f",surface:"#12121a",card:"#1a1a26",border:"#2a2a3e",
-  accent:"#c8a96e",accentDim:"#8a7048",accentGlow:"rgba(200,169,110,0.12)",
-  text:"#e8e4d8",muted:"#7a7890",dim:"#4a4860",
-  solo:"#4e9e8f",group:"#7e6db5",interview:"#c05c5c",ok:"#4e9e6f"};
+import { useState, useEffect } from "react";
 
-const TYPES={
-  solo:{label:"فردي",color:C.solo,icon:"◎",desc:"مذيع واحد يقدم المحتوى بمفرده"},
-  group:{label:"جماعي",color:C.group,icon:"◈",desc:"أكثر من مذيع يناقشون موضوعاً"},
-  interview:{label:"حواري",color:C.interview,icon:"◇",desc:"استضافة ضيف والتحاور معه"},
-};
-const DURS=["١٠–٢٠ دقيقة","٢٠–٤٠ دقيقة","٤٠–٦٠ دقيقة","٦٠–٩٠ دقيقة","أكثر من ٩٠ دقيقة"];
-const FREQS=["يومي","أسبوعي","نصف شهري","شهري","غير منتظم"];
-const SK="ps_style_v6",EK="ps_eps_v6",AK="ps_apikey";
-
-const getApiKey=()=>localStorage.getItem(AK)||"";
-const getStyle=()=>{try{return JSON.parse(localStorage.getItem(SK))||{};}catch{return{};}};
-const getEps=()=>{try{return JSON.parse(localStorage.getItem(EK))||[];}catch{return[];}};
-const saveEp=ep=>{
-  const eps=getEps(),i=eps.findIndex(e=>e.id===ep.id);
-  if(i>=0)eps[i]=ep;else eps.unshift(ep);
-  localStorage.setItem(EK,JSON.stringify(eps));
+const C = {
+  bg: "#0a0a0f", surface: "#12121a", card: "#1a1a26", border: "#2a2a3e",
+  accent: "#c8a96e", accentDim: "#8a7048", accentGlow: "#c8a96e22",
+  text: "#e8e4d8", textMuted: "#7a7890", textDim: "#4a4860",
+  solo: "#4e9e8f", group: "#7e6db5", interview: "#c05c5c", success: "#4e9e6f",
 };
 
-const ai=async(sys,msg,max=3500)=>{
-  const key=getApiKey();
-  if(!key)throw new Error("أدخل الـ API Key أولاً");
-  const r=await fetch("https://api.anthropic.com/v1/messages",{
-    method:"POST",
-    headers:{"Content-Type":"application/json","x-api-key":key,"anthropic-version":"2023-06-01"},
-    body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:max,system:sys,messages:[{role:"user",content:msg}]}),
+const TYPE_CFG = {
+  solo: { label: "فردي", color: C.solo, icon: "◎", desc: "مذيع واحد يقدم المحتوى بمفرده" },
+  group: { label: "جماعي", color: C.group, icon: "◈", desc: "أكثر من مذيع يناقشون موضوعاً واحداً" },
+  interview: { label: "حواري", color: C.interview, icon: "◇", desc: "استضافة ضيف والتحاور معه" },
+};
+
+const FREQ_OPTS = ["يومي", "أسبوعي", "نصف شهري", "شهري", "غير منتظم"];
+const DUR_OPTS = ["١٠–٢٠ دقيقة", "٢٠–٤٠ دقيقة", "٤٠–٦٠ دقيقة", "٦٠–٩٠ دقيقة", "أكثر من ٩٠ دقيقة"];
+const STYLE_KEY = "ps_style_v1";
+const EPS_KEY = "ps_episodes_v1";
+
+const apiCall = async (system, userMsg, maxTokens = 1500) => {
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "anthropic-dangerous-direct-browser-access": "true" },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-20250514", max_tokens: maxTokens,
+      system, messages: [{ role: "user", content: userMsg }],
+    }),
   });
-  if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e?.error?.message||"HTTP "+r.status);}
-  const j=await r.json();
-  return(j.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("\n");
+  if (!res.ok) throw new Error(`${res.status}`);
+  const json = await res.json();
+  return json.content?.filter(b => b.type === "text").map(b => b.text).join("\n") || "";
 };
 
-// ── DOM helpers ──
-const el=(tag,attrs,...children)=>{
-  const e=document.createElement(tag);
-  if(attrs)for(const[k,v]of Object.entries(attrs)){
-    if(k==="style")Object.assign(e.style,v);
-    else if(k.startsWith("on"))e.addEventListener(k.slice(2).toLowerCase(),v);
-    else e.setAttribute(k,v);
-  }
-  for(const c of children.flat(Infinity)){
-    if(c==null||c===false)continue;
-    e.appendChild(typeof c==="string"?document.createTextNode(c):c);
-  }
-  return e;
+// ─── Base UI ──────────────────────────────────────────────────────────────────
+const Lbl = ({ children, hint }) => (
+  <div style={{ marginBottom: "10px" }}>
+    <span style={{ fontSize: "11px", letterSpacing: "0.14em", color: C.textMuted, textTransform: "uppercase" }}>{children}</span>
+    {hint && <span style={{ fontSize: "11px", color: C.textDim, marginRight: "8px" }}>{hint}</span>}
+  </div>
+);
+
+const Inp = ({ value, onChange, placeholder, multiline, rows = 5, disabled }) => {
+  const s = {
+    width: "100%", background: disabled ? C.surface : C.bg, border: `1px solid ${C.border}`,
+    borderRadius: "6px", padding: "13px 15px", color: C.text,
+    fontFamily: "'Noto Kufi Arabic', sans-serif", fontSize: "14px",
+    outline: "none", resize: multiline ? "vertical" : "none",
+    direction: "rtl", boxSizing: "border-box", lineHeight: "1.8",
+    opacity: disabled ? 0.6 : 1,
+  };
+  return multiline
+    ? <textarea value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} rows={rows} style={s} disabled={disabled} />
+    : <input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} style={s} disabled={disabled} />;
 };
 
-const IS={width:"100%",background:C.bg,border:`1px solid ${C.border}`,borderRadius:"6px",
-  padding:"11px 13px",color:C.text,fontSize:"14px",direction:"rtl",
-  lineHeight:"1.8",boxSizing:"border-box"};
+const Sel = ({ value, onChange, options, placeholder }) => (
+  <select value={value} onChange={e => onChange(e.target.value)} style={{
+    width: "100%", background: C.bg, border: `1px solid ${C.border}`, borderRadius: "6px",
+    padding: "13px 15px", color: value ? C.text : C.textMuted,
+    fontFamily: "'Noto Kufi Arabic', sans-serif", fontSize: "14px",
+    outline: "none", direction: "rtl", cursor: "pointer", appearance: "none",
+  }}>
+    <option value="" disabled>{placeholder}</option>
+    {options.map(o => <option key={o} value={o}>{o}</option>)}
+  </select>
+);
 
-const mkInp=(val,onChange,ph,multi=false,rows=4)=>{
-  if(multi){
-    const t=el("textarea",{placeholder:ph,rows,style:{...IS,resize:"vertical"}});
-    t.value=val;t.addEventListener("input",e=>onChange(e.target.value));return t;
-  }
-  const i=el("input",{placeholder:ph,style:IS});
-  i.value=val;i.addEventListener("input",e=>onChange(e.target.value));return i;
-};
-
-const mkSel=(val,onChange,options,ph)=>{
-  const s=el("select",{style:{...IS,cursor:"pointer",appearance:"none",color:val?C.text:C.muted}},
-    el("option",{value:"",disabled:"true"},ph),
-    ...options.map(o=>el("option",{value:o},o)));
-  s.value=val;s.addEventListener("change",e=>onChange(e.target.value));return s;
-};
-
-const mkBtn=(text,onClick,opts={})=>{
-  const{fill,outline,small,full,disabled,color}=opts;
-  return el("button",{onClick,disabled,style:{
-    background:fill?(color||C.accent):"transparent",
-    border:`1px solid ${fill?(color||C.accent):C.border}`,
-    borderRadius:"6px",color:fill?"#0a0a0f":C.muted,
-    fontWeight:"700",fontSize:small?"12px":"14px",
-    padding:small?"6px 14px":"11px 22px",
-    opacity:disabled?0.4:1,cursor:disabled?"not-allowed":"pointer",
-    width:full?"100%":"auto",
-  }},text);
-};
-
-const mkCard=(children,style={})=>
-  el("div",{style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:"12px",padding:"22px",...style}},...children);
-
-const mkBadge=type=>{
-  const t=TYPES[type];
-  return el("span",{style:{fontSize:"12px",fontWeight:"700",padding:"2px 9px",borderRadius:"5px",
-    background:`${t.color}20`,border:`1px solid ${t.color}`,color:t.color}},`${t.icon} ${t.label}`);
-};
-
-const mkLbl=text=>el("div",{style:{fontSize:"11px",letterSpacing:"0.13em",
-  color:C.muted,textTransform:"uppercase",marginBottom:"8px"}},text);
-
-const mkSpin=()=>el("div",{style:{textAlign:"center",padding:"36px 0"}},
-  el("div",{style:{width:"32px",height:"32px",border:`3px solid ${C.border}`,
-    borderTop:`3px solid ${C.accent}`,borderRadius:"50%",
-    animation:"spin 0.8s linear infinite",margin:"0 auto 12px"}}),
-  el("div",{style:{color:C.muted,fontSize:"13px"}},"جارٍ التوليد..."));
-
-const mkOut=text=>el("div",{style:{background:C.bg,border:`1px solid ${C.border}`,
-  borderRadius:"10px",padding:"18px",color:C.text,fontSize:"13px",lineHeight:"2",
-  direction:"rtl",whiteSpace:"pre-wrap",maxHeight:"380px",overflowY:"auto"}},text);
-
-const mkDots=(cur,tot)=>el("div",{style:{display:"flex",gap:"5px",justifyContent:"center",marginBottom:"28px"}},
-  ...Array.from({length:tot},(_,i)=>el("div",{style:{
-    width:i===cur?"22px":"7px",height:"7px",borderRadius:"4px",
-    background:i===cur?C.accent:i<cur?C.accentDim:C.border,transition:"all 0.3s"}})));
-
-const mkCopyBtn=(text)=>{
-  const b=mkBtn("نسخ",()=>{
-    navigator.clipboard.writeText(text);
-    b.textContent="✓ تم النسخ";
-    setTimeout(()=>{b.textContent="نسخ";},2000);
-  },{outline:true,small:true});
-  return b;
-};
-
-const mkNextBanner=(msg,sub,label,onClick,color=C.accent)=>
-  el("div",{style:{marginTop:"14px",padding:"12px 16px",borderRadius:"10px",
-    background:`${color}15`,border:`1px solid ${color}40`,
-    display:"flex",alignItems:"center",justifyContent:"space-between"}},
-    el("div",null,
-      el("div",{style:{color,fontWeight:"700",fontSize:"13px",marginBottom:"2px"}},"✓ "+msg),
-      el("div",{style:{color:C.muted,fontSize:"11px"}},sub)
-    ),
-    mkBtn(label+" ←",onClick,{fill:true,small:true,color})
+const Btn = ({ children, onClick, color, disabled, variant = "fill", small, full }) => {
+  const base = color || C.accent;
+  return (
+    <button onClick={onClick} disabled={disabled} style={{
+      background: variant === "fill" ? base : "transparent",
+      border: `1px solid ${variant === "fill" ? base : C.border}`,
+      borderRadius: "6px", color: variant === "fill" ? "#0a0a0f" : C.textMuted,
+      fontFamily: "'Noto Kufi Arabic', sans-serif", fontWeight: "700",
+      fontSize: small ? "12px" : "14px", padding: small ? "7px 16px" : "12px 26px",
+      cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.4 : 1,
+      transition: "all 0.15s", width: full ? "100%" : "auto",
+    }}>{children}</button>
   );
-
-// ── NAV ──
-const NAVTABS=[{id:"create",l:"إنشاء"},{id:"production",l:"الإنتاج"},{id:"marketing",l:"التسويق"},{id:"episodes",l:"حلقاتي"}];
-
-// ── STATE ──
-let S={
-  tab:"create",showStyle:false,showApiKey:!getApiKey(),apiKeyInput:getApiKey(),
-  hasStyle:false,episode:null,
-  step:0,form:{name:"",type:"",duration:"",frequency:"",topic:"",hostCount:2},
-  script:"",scriptBusy:false,
-  prodFmt:"",prodResult:"",prodBusy:false,
-  mktLink:"",mktTab:"description",mktOuts:{},mktBusy:"",mktDlDone:false,
-  styleForm:{},styleSample:"",styleAnalyzing:false,
-  eps:getEps(),
 };
-let RT=null;
-const ss=patch=>{Object.assign(S,typeof patch==="function"?patch(S):patch);clearTimeout(RT);RT=setTimeout(render,16);};
 
-// ── RENDER ──
-function render(){
-  const root=document.getElementById("root");
-  root.innerHTML="";
+const Card = ({ children, style, accent }) => (
+  <div style={{
+    background: C.card, border: `1px solid ${accent ? `${accent}50` : C.border}`,
+    borderRadius: "12px", padding: "24px", ...style,
+  }}>{children}</div>
+);
 
-  if(S.showApiKey){root.appendChild(mkApiKeyScreen());return;}
-  if(S.showStyle){root.appendChild(mkStyleModal());}
+const Spinner = ({ color }) => (
+  <div style={{
+    width: "36px", height: "36px", border: `3px solid ${C.border}`,
+    borderTop: `3px solid ${color || C.accent}`, borderRadius: "50%",
+    animation: "spin 0.8s linear infinite", margin: "0 auto 16px",
+  }} />
+);
 
-  const app=el("div",{style:{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",padding:"24px 14px"}});
-
-  // header
-  const hdr=el("div",{style:{width:"100%",maxWidth:"610px",marginBottom:"20px"}});
-  const hdrTop=el("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}});
-
-  const logo=el("div",null,
-    el("div",{style:{display:"inline-flex",alignItems:"center",gap:"7px",
-      background:C.surface,border:`1px solid ${C.border}`,borderRadius:"100px",
-      padding:"4px 13px",marginBottom:"10px"}},
-      el("div",{style:{width:"5px",height:"5px",borderRadius:"50%",background:C.accent,boxShadow:`0 0 6px ${C.accent}`}}),
-      el("span",{style:{color:C.muted,fontSize:"10px",letterSpacing:"0.12em"}},"PODCAST STUDIO")
-    ),
-    el("div",{style:{fontSize:"21px",fontWeight:"700",color:C.text,marginBottom:"2px"}},"استوديو البودكاست"),
-    el("div",{style:{color:C.muted,fontSize:"12px"}},"من الفكرة إلى النشر")
+const CopyBtn = ({ text, small }) => {
+  const [copied, setCopied] = useState(false);
+  return (
+    <Btn variant="outline" small={small} onClick={() => {
+      navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }}>{copied ? "✓ تم النسخ" : "نسخ"}</Btn>
   );
+};
 
-  const btns=el("div",{style:{display:"flex",gap:"8px",alignItems:"flex-start"}},
-    el("button",{onClick:()=>ss({showApiKey:true}),style:{
-      background:C.surface,border:`1px solid ${C.border}`,borderRadius:"8px",
-      padding:"7px 10px",color:C.muted,fontSize:"11px",fontWeight:"700"}},"🔑 API Key"),
-    el("button",{onClick:()=>ss({showStyle:true,styleForm:getStyle()}),style:{
-      background:S.hasStyle?C.accentGlow:C.surface,
-      border:`1px solid ${S.hasStyle?C.accent:C.border}`,
-      borderRadius:"10px",padding:"9px 13px",
-      color:S.hasStyle?C.accent:C.muted,fontWeight:"700",fontSize:"11px",textAlign:"center"}},
-      el("div",{style:{fontSize:"17px",marginBottom:"2px"}},"✦"),
-      el("div",null,"أسلوبي"),
-      el("div",{style:{fontSize:"9px",marginTop:"2px",opacity:"0.7"}},S.hasStyle?"مفعّل":"غير مُعدّ")
-    )
+const TypeBadge = ({ type }) => {
+  const cfg = TYPE_CFG[type];
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center", gap: "5px",
+      background: `${cfg.color}20`, border: `1px solid ${cfg.color}`,
+      borderRadius: "5px", padding: "3px 10px", color: cfg.color, fontSize: "12px", fontWeight: "700",
+    }}>{cfg.icon} {cfg.label}</span>
   );
+};
 
-  hdrTop.append(logo,btns);hdr.appendChild(hdrTop);
+const StepDots = ({ current, total }) => (
+  <div style={{ display: "flex", gap: "6px", justifyContent: "center", marginBottom: "36px" }}>
+    {Array.from({ length: total }).map((_, i) => (
+      <div key={i} style={{
+        width: i === current ? "26px" : "7px", height: "7px", borderRadius: "4px",
+        background: i === current ? C.accent : i < current ? C.accentDim : C.border,
+        transition: "all 0.3s",
+      }} />
+    ))}
+  </div>
+);
 
-  if(S.episode){
-    hdr.appendChild(el("div",{style:{marginTop:"10px",background:C.surface,
-      border:`1px solid ${C.border}`,borderRadius:"8px",padding:"9px 13px",
-      display:"flex",alignItems:"center",gap:"8px"}},
-      el("div",{style:{width:"6px",height:"6px",borderRadius:"50%",background:C.ok,flexShrink:"0"}}),
-      el("span",{style:{color:C.muted,fontSize:"11px"}},"الحلقة الحالية:"),
-      el("span",{style:{fontWeight:"700",fontSize:"12px",color:C.text}},S.episode.name),
-      mkBadge(S.episode.type)
-    ));
-  }
+const OutputBox = ({ content }) => (
+  <div style={{
+    background: C.bg, border: `1px solid ${C.border}`, borderRadius: "10px",
+    padding: "20px", color: C.text, fontSize: "14px", lineHeight: "2",
+    direction: "rtl", whiteSpace: "pre-wrap", fontFamily: "'Noto Kufi Arabic', sans-serif",
+    maxHeight: "420px", overflowY: "auto",
+  }}>{content}</div>
+);
 
-  // nav
-  const nav=el("div",{style:{display:"flex",gap:"3px",background:C.surface,
-    border:`1px solid ${C.border}`,borderRadius:"10px",padding:"4px",marginBottom:"22px"}},
-    ...NAVTABS.map(t=>el("button",{onClick:()=>ss({tab:t.id}),style:{
-      flex:"1",background:S.tab===t.id?C.accent:"transparent",border:"none",borderRadius:"7px",
-      padding:"9px 4px",color:S.tab===t.id?"#0a0a0f":C.muted,fontWeight:"700",fontSize:"12px"}},t.l))
+// ─── Style Modal ──────────────────────────────────────────────────────────────
+function StyleModal({ onClose }) {
+  const [profile, setProfile] = useState(() => { try { return JSON.parse(localStorage.getItem(STYLE_KEY)) || {}; } catch { return {}; } });
+  const [sample, setSample] = useState("");
+  const [analyzing, setAnalyzing] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const upd = (k, v) => setProfile(p => ({ ...p, [k]: v }));
+
+  const analyze = async () => {
+    if (!sample.trim()) return;
+    setAnalyzing(true);
+    try {
+      const raw = await apiCall(
+        "أنت محلل أسلوب كتابي. ردودك JSON فقط بدون أي نص إضافي أو backticks.",
+        `حلّل هذا السكريبت واستخرج ملف الأسلوب. أجب بـ JSON فقط:\n{"tone":"","opening":"","language":"","structure":"","closing":"","distinctive":""}\n\nالسكريبت: ${sample}`
+      );
+      const parsed = JSON.parse(raw.trim());
+      setProfile(p => ({ ...p, ...parsed, analyzed: true }));
+    } catch { }
+    setAnalyzing(false);
+  };
+
+  const save = () => {
+    localStorage.setItem(STYLE_KEY, JSON.stringify({ ...profile, lastUpdated: new Date().toISOString() }));
+    setSaved(true);
+    setTimeout(() => { setSaved(false); onClose(); }, 1000);
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "#0a0a0ff2", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200, padding: "16px" }}>
+      <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: "16px", width: "100%", maxWidth: "600px", maxHeight: "92vh", overflowY: "auto", padding: "32px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "24px" }}>
+          <div>
+            <div style={{ fontSize: "18px", fontWeight: "700", color: C.text, marginBottom: "4px" }}>✦ ملف أسلوبي</div>
+            <div style={{ color: C.textMuted, fontSize: "12px" }}>تُستخدم تلقائياً في كل سكريبت تولّده الأداة</div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: C.textMuted, fontSize: "20px", cursor: "pointer" }}>✕</button>
+        </div>
+        <Card accent={C.accent} style={{ marginBottom: "24px" }}>
+          <div style={{ fontSize: "12px", color: C.accent, fontWeight: "700", marginBottom: "8px" }}>استخراج تلقائي من سكريبت سابق</div>
+          <Inp value={sample} onChange={setSample} placeholder="الصق مقطعاً من حلقة سابقة..." multiline rows={4} />
+          <div style={{ marginTop: "10px", display: "flex", alignItems: "center", gap: "12px" }}>
+            <Btn onClick={analyze} disabled={!sample.trim() || analyzing} small color={C.accent}>{analyzing ? "جارٍ التحليل..." : "تحليل وملء تلقائي"}</Btn>
+            {profile.analyzed && <span style={{ fontSize: "11px", color: C.success }}>✓ تم الاستخراج</span>}
+          </div>
+        </Card>
+        <div style={{ display: "grid", gap: "16px" }}>
+          {[
+            { k: "tone", l: "النبرة العامة", h: "(دافئ، تحليلي، حماسي...)", p: "كيف تصف طريقة حديثك؟" },
+            { k: "opening", l: "طريقة الافتتاح", h: "(سؤال، قصة، إحصائية...)", p: "كيف تبدأ حلقاتك عادةً؟" },
+            { k: "language", l: "نوع اللغة", h: "(فصحى / خليجية / مصرية / مزيج)", p: "ما اللهجة أو المستوى اللغوي؟" },
+            { k: "closing", l: "طريقة الختام", h: "(سؤال للمتابعين، دعوة...)", p: "كيف تنهي حلقاتك عادةً؟" },
+            { k: "distinctive", l: "بصمتك المميزة", h: "", p: "ما الذي يميز أسلوبك؟" },
+          ].map(f => (
+            <div key={f.k}><Lbl hint={f.h}>{f.l}</Lbl><Inp value={profile[f.k] || ""} onChange={v => upd(f.k, v)} placeholder={f.p} /></div>
+          ))}
+          <div><Lbl hint="كيف تنظم أفكارك">بناء المحتوى</Lbl><Inp value={profile.structure || ""} onChange={v => upd("structure", v)} placeholder="مثال: أبدأ بسؤال ثم أبني إجابته..." multiline rows={3} /></div>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", marginTop: "28px" }}>
+          <Btn variant="outline" onClick={onClose}>إلغاء</Btn>
+          <Btn onClick={save} disabled={!(profile.tone || profile.opening || profile.structure)}>{saved ? "✓ تم الحفظ" : "حفظ الملف"}</Btn>
+        </div>
+      </div>
+    </div>
   );
-
-  const main=el("div",{style:{width:"100%",maxWidth:"610px"}},
-    el("div",{style:{background:C.surface,border:`1px solid ${C.border}`,borderRadius:"14px",padding:"22px"}},
-      nav,
-      S.tab==="create"?mkCreateScreen():
-      S.tab==="production"?mkProductionScreen():
-      S.tab==="marketing"?mkMarketingScreen():
-      mkEpisodesScreen()
-    )
-  );
-
-  const footer=el("div",{style:{color:C.dim,fontSize:"10px",marginTop:"18px",textAlign:"center"}},
-    "المحتوى المولد للاسترشاد والتعديل قبل النشر");
-
-  app.append(hdr,main,footer);
-  root.appendChild(app);
 }
 
-// ── API KEY SCREEN ──
-function mkApiKeyScreen(){
-  const wrap=el("div",{style:{minHeight:"100vh",display:"flex",alignItems:"center",
-    justifyContent:"center",padding:"16px",background:C.bg}});
-  const box=el("div",{style:{background:C.surface,border:`1px solid ${C.border}`,
-    borderRadius:"14px",width:"100%",maxWidth:"460px",padding:"32px"}});
-
-  const inp=mkInp(S.apiKeyInput,v=>ss({apiKeyInput:v}),"sk-ant-api03-...");
-  inp.style.fontFamily="monospace";inp.style.fontSize="13px";
-
-  box.append(
-    el("div",{style:{fontSize:"22px",fontWeight:"700",color:C.text,marginBottom:"8px"}},"🔑 API Key"),
-    el("div",{style:{color:C.muted,fontSize:"13px",marginBottom:"20px",lineHeight:"1.8"}},
-      "للحصول على API Key:",el("br"),
-      "١. اذهب إلى ",
-      el("a",{href:"https://console.anthropic.com/",target:"_blank",
-        style:{color:C.accent}},"console.anthropic.com"),
-      el("br"),"٢. API Keys ← Create Key",el("br"),"٣. انسخ الـ Key والصقه هنا"
-    ),
-    mkLbl("الـ API Key"),
-    inp,
-    el("div",{style:{color:C.dim,fontSize:"11px",marginTop:"8px",marginBottom:"20px"}},
-      "يُحفظ في متصفحك فقط — لا يُرسل لأي جهة غير Anthropic مباشرة"),
-    mkBtn("حفظ والبدء",()=>{
-      const k=S.apiKeyInput.trim();
-      if(!k)return;
-      localStorage.setItem(AK,k);
-      ss({showApiKey:false});
-    },{fill:true,full:true,disabled:!S.apiKeyInput.trim()})
+// ─── Step 1: Identity ─────────────────────────────────────────────────────────
+function Step1({ data, setData, onNext }) {
+  return (
+    <div>
+      <div style={{ marginBottom: "32px" }}>
+        <div style={{ fontSize: "20px", fontWeight: "700", color: C.text, marginBottom: "6px" }}>هوية البودكاست</div>
+        <div style={{ color: C.textMuted, fontSize: "13px" }}>ابدأ بتحديد اسم البودكاست وطبيعته</div>
+      </div>
+      <div style={{ marginBottom: "24px" }}><Lbl>اسم البودكاست</Lbl><Inp value={data.name} onChange={v => setData({ ...data, name: v })} placeholder="مثال: بودكاست مدى، صوت العقل..." /></div>
+      <div style={{ marginBottom: "12px" }}><Lbl>نوع البودكاست</Lbl></div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px", marginBottom: "32px" }}>
+        {Object.entries(TYPE_CFG).map(([key, cfg]) => {
+          const sel = data.type === key;
+          return (
+            <div key={key} onClick={() => setData({ ...data, type: key })} style={{
+              border: `2px solid ${sel ? cfg.color : C.border}`, borderRadius: "10px",
+              padding: "18px 12px", cursor: "pointer", background: sel ? `${cfg.color}12` : C.bg,
+              transition: "all 0.2s", textAlign: "center",
+            }}>
+              <div style={{ fontSize: "24px", marginBottom: "6px" }}>{cfg.icon}</div>
+              <div style={{ color: sel ? cfg.color : C.text, fontWeight: "700", fontSize: "14px", marginBottom: "4px" }}>{cfg.label}</div>
+              <div style={{ color: C.textMuted, fontSize: "11px", lineHeight: "1.5" }}>{cfg.desc}</div>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ textAlign: "left" }}><Btn onClick={onNext} disabled={!data.name || !data.type}>التالي ←</Btn></div>
+    </div>
   );
-  wrap.appendChild(box);return wrap;
 }
 
-// ── STYLE MODAL ──
-function mkStyleModal(){
-  const overlay=el("div",{style:{position:"fixed",inset:"0",background:"rgba(0,0,0,0.78)",
-    display:"flex",alignItems:"center",justifyContent:"center",zIndex:"9999",padding:"16px"}});
-  const box=el("div",{style:{background:C.surface,border:`1px solid ${C.border}`,
-    borderRadius:"14px",width:"100%",maxWidth:"540px",maxHeight:"90vh",overflowY:"auto",padding:"26px"}});
+// ─── Step 2: Episode Details ──────────────────────────────────────────────────
+function Step2({ data, setData, onNext, onBack }) {
+  const cfg = TYPE_CFG[data.type];
+  return (
+    <div>
+      <div style={{ marginBottom: "32px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px" }}>
+          <TypeBadge type={data.type} />
+          <span style={{ fontSize: "18px", fontWeight: "700", color: C.text }}>{data.name}</span>
+        </div>
+        <div style={{ color: C.textMuted, fontSize: "13px" }}>تفاصيل الحلقة وبيئة الإنتاج</div>
+      </div>
 
-  const sampleInp=mkInp(S.styleSample,v=>ss({styleSample:v}),"الصق مقطعاً من حلقة سابقة...",true,3);
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginBottom: "20px" }}>
+        <div><Lbl>مدة الحلقة</Lbl><Sel value={data.duration} onChange={v => setData({ ...data, duration: v })} options={DUR_OPTS} placeholder="اختر المدة" /></div>
+        <div><Lbl>تكرار النشر</Lbl><Sel value={data.frequency} onChange={v => setData({ ...data, frequency: v })} options={FREQ_OPTS} placeholder="كم مرة تنشر؟" /></div>
+      </div>
 
-  const analyzeBtn=mkBtn(S.styleAnalyzing?"جارٍ التحليل...":"تحليل وملء تلقائي",async()=>{
-    if(!S.styleSample.trim()||S.styleAnalyzing)return;
-    ss({styleAnalyzing:true});
-    try{
-      const raw=await ai("أنت محلل أسلوب. ردودك JSON فقط بدون أي نص إضافي.",
-        `حلّل هذا السكريبت وأجب بـ JSON فقط:\n{"tone":"","opening":"","language":"","structure":"","closing":"","distinctive":""}\n\nالسكريبت: ${S.styleSample}`,600);
-      const parsed=JSON.parse(raw.trim());
-      ss({styleForm:{...S.styleForm,...parsed},styleAnalyzing:false});
-    }catch{ss({styleAnalyzing:false});}
-  },{fill:true,small:true,color:C.accent,disabled:S.styleAnalyzing});
+      {data.type === "group" && (
+        <div style={{ marginBottom: "20px" }}>
+          <Lbl>عدد المذيعين</Lbl>
+          <div style={{ display: "flex", gap: "8px" }}>
+            {[2, 3, 4, 5].map(n => (
+              <div key={n} onClick={() => setData({ ...data, hostCount: n })} style={{
+                border: `2px solid ${data.hostCount === n ? cfg.color : C.border}`, borderRadius: "8px",
+                padding: "9px 18px", cursor: "pointer", color: data.hostCount === n ? cfg.color : C.textMuted,
+                fontWeight: "700", background: data.hostCount === n ? `${cfg.color}15` : "transparent", transition: "all 0.2s",
+              }}>{n}</div>
+            ))}
+          </div>
+        </div>
+      )}
 
-  const FIELDS=[
-    {k:"tone",l:"النبرة العامة",ph:"دافئ، تحليلي، حماسي..."},
-    {k:"opening",l:"طريقة الافتتاح",ph:"سؤال تشويقي، قصة..."},
-    {k:"language",l:"نوع اللغة",ph:"فصحى / خليجية / مزيج..."},
-    {k:"closing",l:"طريقة الختام",ph:"سؤال للمتابعين، توصية..."},
-    {k:"distinctive",l:"بصمتك المميزة",ph:"ما يجعل أسلوبك مختلفاً..."},
+      {/* Studio type */}
+      <div style={{ marginBottom: "20px" }}>
+        <Lbl>نوع الاستوديو</Lbl>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+          {[
+            { v: "audio", icon: "🎙", label: "صوتي فقط", desc: "بودكاست صوتي بدون تصوير" },
+            { v: "video", icon: "🎬", label: "مصوّر", desc: "تسجيل بالصوت والصورة" },
+          ].map(opt => {
+            const sel = data.studioType === opt.v;
+            return (
+              <div key={opt.v} onClick={() => setData({ ...data, studioType: opt.v })} style={{
+                border: `2px solid ${sel ? C.accent : C.border}`, borderRadius: "10px",
+                padding: "16px", cursor: "pointer", background: sel ? C.accentGlow : C.bg,
+                transition: "all 0.2s", textAlign: "center",
+              }}>
+                <div style={{ fontSize: "22px", marginBottom: "6px" }}>{opt.icon}</div>
+                <div style={{ color: sel ? C.accent : C.text, fontWeight: "700", fontSize: "13px", marginBottom: "3px" }}>{opt.label}</div>
+                <div style={{ color: C.textMuted, fontSize: "11px" }}>{opt.desc}</div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div style={{ marginBottom: "28px" }}>
+        <Lbl>{data.type === "solo" ? "موضوع الحلقة أو الفكرة الكاملة" : data.type === "group" ? "موضوع النقاش وأبرز المحاور" : "موضوع الحلقة وتفاصيل الضيف"}</Lbl>
+        <Inp value={data.topic} onChange={v => setData({ ...data, topic: v })} multiline rows={5}
+          placeholder={data.type === "solo" ? "اكتب الفكرة بشكل موسع..." : data.type === "group" ? "ما الموضوع الذي ستناقشونه؟" : "من الضيف؟ وما المحور الذي ستتناوله معه؟"} />
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "space-between" }}>
+        <Btn variant="outline" onClick={onBack}>← رجوع</Btn>
+        <Btn onClick={onNext} disabled={!data.duration || !data.frequency || !data.topic || !data.studioType}>توليد المحتوى ←</Btn>
+      </div>
+    </div>
+  );
+}
+
+// ─── Step 3: Script ───────────────────────────────────────────────────────────
+function Step3({ data, onNext, onBack }) {
+  const [output, setOutput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [done, setDone] = useState(false);
+  const cfg = TYPE_CFG[data.type];
+
+  const styleBlock = () => {
+    try {
+      const s = JSON.parse(localStorage.getItem(STYLE_KEY));
+      if (!s) return "";
+      const lines = [s.tone && `النبرة: ${s.tone}`, s.opening && `الافتتاح: ${s.opening}`, s.language && `اللغة: ${s.language}`, s.structure && `البنية: ${s.structure}`, s.closing && `الختام: ${s.closing}`, s.distinctive && `البصمة: ${s.distinctive}`].filter(Boolean);
+      return lines.length ? `\n\n━━━ أسلوب المذيع — التزم به في كل جملة ━━━\n${lines.join("\n")}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━` : "";
+    } catch { return ""; }
+  };
+
+  const generate = async () => {
+    setLoading(true); setOutput("");
+    const header = `البودكاست: "${data.name}" | النوع: ${TYPE_CFG[data.type].label} | المدة: ${data.duration} | النشر: ${data.frequency}${styleBlock()}\n\n`;
+    let prompt = "";
+    if (data.type === "solo") prompt = header + `الموضوع: ${data.topic}\n\nاكتب سكريبت كامل ومفصّل للتسجيل مباشرةً، يشمل: مقدمة جذابة كاملة، عرض الموضوع مع انتقالات طبيعية، تعمق في كل نقطة مع أمثلة وقصص، خاتمة قوية مع call to action. ضع [توقف] عند الانتقالات و[تأكيد] عند النقاط المهمة. الطول يتناسب مع مدة ${data.duration}.`;
+    else if (data.type === "group") {
+      const h = data.hostCount || 2;
+      const ns = ["م١","م٢","م٣","م٤","م٥"].slice(0,h).join("، ");
+      prompt = header + `الموضوع: ${data.topic}\nعدد المذيعين: ${h} (${ns})\n\nاكتب سكريبت حوار جماعي كامل — كل جملة لكل مذيع مكتوبة بالكامل. لكل مذيع زاوية مختلفة، مع توافق وخلاف حقيقي. مقدمة وخاتمة مشتركة. الطول يتناسب مع مدة ${data.duration}.`;
+    } else {
+      prompt = header + `الضيف/الموضوع: ${data.topic}\n\nاكتب أسئلة احترافية كاملة: ٣ تمهيدية، ٦–٨ جوهرية متدرجة، ٣ استفزازية، سؤال ختامي مميز. لكل سؤال: اكتبه كاملاً وهدفه وأسئلة متابعة محتملة.`;
+    }
+    try {
+      const text = await apiCall("أنت خبير بودكاست عربي. تكتب سكريبتات كاملة جاهزة للتسجيل. التزم بأسلوب المذيع إن وُجد. ردودك بالعربية.", prompt, 4000);
+      setOutput(text || "لم يتم إرجاع محتوى، حاول مجدداً.");
+      setDone(true);
+    } catch (e) { setOutput(`خطأ: ${e.message}`); setDone(true); }
+    setLoading(false);
+  };
+
+  const hasStyle = (() => { try { const s = JSON.parse(localStorage.getItem(STYLE_KEY)); return !!(s && (s.tone || s.opening)); } catch { return false; } })();
+
+  return (
+    <div>
+      <div style={{ marginBottom: "20px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "4px" }}>
+          <TypeBadge type={data.type} />
+          <span style={{ fontSize: "17px", fontWeight: "700", color: C.text }}>{data.name}</span>
+          {hasStyle && <span style={{ fontSize: "10px", color: C.accent, background: C.accentGlow, border: `1px solid ${C.accentDim}40`, borderRadius: "4px", padding: "2px 7px" }}>✦ أسلوبي</span>}
+        </div>
+        <span style={{ color: C.textMuted, fontSize: "12px" }}>{data.duration} · {data.frequency} · {data.studioType === "video" ? "🎬 مصوّر" : "🎙 صوتي"}</span>
+      </div>
+
+      {!done && !loading && (
+        <Card style={{ textAlign: "center", padding: "44px 24px" }}>
+          <div style={{ fontSize: "36px", marginBottom: "12px" }}>{data.type === "solo" ? "✦" : data.type === "group" ? "⬡" : "◈"}</div>
+          <div style={{ color: C.text, fontSize: "15px", fontWeight: "600", marginBottom: "6px" }}>
+            جاهز لتوليد {data.type === "solo" ? "السكريبت" : data.type === "group" ? "سكريبت الحوار الجماعي" : "أسئلة الحلقة"}
+          </div>
+          <div style={{ color: C.textMuted, fontSize: "12px", marginBottom: "24px" }}>
+            {hasStyle ? "سيُكتب بأسلوبك الشخصي المحفوظ" : "سيُولّد المحتوى بناءً على ما أدخلته"}
+          </div>
+          <Btn onClick={generate} color={cfg.color}>توليد المحتوى</Btn>
+        </Card>
+      )}
+
+      {loading && <Card style={{ textAlign: "center", padding: "44px 24px" }}><Spinner color={cfg.color} /><div style={{ color: C.textMuted, fontSize: "13px" }}>جارٍ توليد المحتوى...</div><style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style></Card>}
+
+      {done && output && (
+        <div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+            <Lbl>{data.type === "solo" ? "السكريبت" : data.type === "group" ? "سكريبت الحوار" : "أسئلة الحلقة"}</Lbl>
+            <CopyBtn text={output} small />
+          </div>
+          <OutputBox content={output} />
+          <div style={{ display: "flex", gap: "8px", marginTop: "12px", justifyContent: "flex-end" }}>
+            <Btn variant="outline" small onClick={generate}>إعادة التوليد</Btn>
+          </div>
+        </div>
+      )}
+
+      <div style={{ display: "flex", justifyContent: "space-between", marginTop: "24px" }}>
+        <Btn variant="outline" onClick={onBack}>← رجوع</Btn>
+        {done && output && <Btn onClick={() => onNext(output)} color={cfg.color}>التالي: الإنتاج ←</Btn>}
+      </div>
+    </div>
+  );
+}
+
+// ─── Step 4: Production ───────────────────────────────────────────────────────
+function Step4({ data, script, onNext, onBack }) {
+  const [output, setOutput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [done, setDone] = useState(false);
+  const cfg = TYPE_CFG[data.type];
+
+  const generate = async () => {
+    setLoading(true); setOutput("");
+    const isVideo = data.studioType === "video";
+    const prompt = `البودكاست: "${data.name}" | النوع: ${TYPE_CFG[data.type].label} | المدة: ${data.duration}
+الاستوديو: ${isVideo ? "مصوّر بالكاميرا" : "صوتي فقط"}
+${data.type === "group" ? `عدد المذيعين: ${data.hostCount || 2}` : ""}
+
+قدّم توصيات إنتاج شاملة تشمل:
+
+${isVideo ? `🎬 الإضاءة:
+- تفاصيل إضاءة ${data.type === "group" ? `${data.hostCount || 2} أشخاص` : data.type === "interview" ? "شخصين (مضيف وضيف)" : "شخص واحد"}
+- أنواع الإضاءة المقترحة وأماكنها
+- نصائح لتجنب الظلال والانعكاسات
+
+📷 الكاميرا والزوايا:
+- إعداد الكاميرات ${data.type !== "solo" ? "لكل مذيع" : ""}
+- الزوايا والبعد المناسب
+- الخلفية المقترحة
+
+🎙 الصوت:
+- نوع وموضع الميكروفون
+- عزل الصوت
+- إعدادات التسجيل` : `🎙 الميكروفون:
+- أفضل نوع ميكروفون للبودكاست الصوتي
+- المسافة والزاوية المثلى من الفم
+- كيفية تجنب أصوات الحروف (البوبي ساوند)
+
+📍 المكان والبيئة:
+- كيف تختار المكان المناسب
+- كيفية عزل الصوت بشكل منخفض التكلفة
+- الأشياء التي يجب تجنبها في الغرفة
+
+✂️ التحرير الصوتي:
+- برامج التحرير المقترحة (مجانية وأخرى مدفوعة)
+- خطوات التحرير الأساسية بالترتيب
+- نصائح لتحسين جودة الصوت في التحرير`}
+
+🎵 الموسيقى المقترحة:
+- نوع وطابع الموسيقى المناسب لهذا البودكاست بالذات
+- أين تستخدمها (مقدمة، فواصل، خاتمة)
+- مصادر للحصول على موسيقى مجانية بدون حقوق
+
+قدّم التوصيات بشكل عملي ومباشر قابل للتطبيق فوراً.`;
+
+    try {
+      const text = await apiCall("أنت خبير إنتاج بودكاست محترف. توصياتك عملية ومحددة وقابلة للتطبيق. ردودك بالعربية.", prompt, 2500);
+      setOutput(text);
+      setDone(true);
+    } catch (e) { setOutput(`خطأ: ${e.message}`); setDone(true); }
+    setLoading(false);
+  };
+
+  return (
+    <div>
+      <div style={{ marginBottom: "20px" }}>
+        <div style={{ fontSize: "18px", fontWeight: "700", color: C.text, marginBottom: "4px" }}>
+          {data.studioType === "video" ? "🎬" : "🎙"} توصيات الإنتاج
+        </div>
+        <div style={{ color: C.textMuted, fontSize: "12px" }}>
+          {data.studioType === "video" ? "إضاءة، كاميرات، صوت، وموسيقى" : "صوت، مكان، تحرير، وموسيقى"}
+        </div>
+      </div>
+
+      {!done && !loading && (
+        <Card style={{ textAlign: "center", padding: "44px 24px" }}>
+          <div style={{ fontSize: "36px", marginBottom: "12px" }}>{data.studioType === "video" ? "🎬" : "🎙"}</div>
+          <div style={{ color: C.text, fontSize: "15px", fontWeight: "600", marginBottom: "6px" }}>
+            توليد توصيات الإنتاج
+          </div>
+          <div style={{ color: C.textMuted, fontSize: "12px", marginBottom: "24px" }}>
+            مخصصة لـ {data.name} — استوديو {data.studioType === "video" ? "مصوّر" : "صوتي"}
+          </div>
+          <Btn onClick={generate} color={cfg.color}>توليد التوصيات</Btn>
+        </Card>
+      )}
+
+      {loading && <Card style={{ textAlign: "center", padding: "44px 24px" }}><Spinner color={cfg.color} /><div style={{ color: C.textMuted, fontSize: "13px" }}>جارٍ تحليل متطلبات الإنتاج...</div><style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style></Card>}
+
+      {done && output && (
+        <div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+            <Lbl>توصيات الإنتاج</Lbl>
+            <CopyBtn text={output} small />
+          </div>
+          <OutputBox content={output} />
+          <div style={{ display: "flex", gap: "8px", marginTop: "12px", justifyContent: "flex-end" }}>
+            <Btn variant="outline" small onClick={generate}>إعادة التوليد</Btn>
+          </div>
+        </div>
+      )}
+
+      <div style={{ display: "flex", justifyContent: "space-between", marginTop: "24px" }}>
+        <Btn variant="outline" onClick={onBack}>← رجوع</Btn>
+        {done && <Btn onClick={onNext} color={cfg.color}>التالي: التسويق ←</Btn>}
+      </div>
+    </div>
+  );
+}
+
+// ─── Step 5: Marketing ────────────────────────────────────────────────────────
+function Step5({ data, script, onNext, onBack }) {
+  const [output, setOutput] = useState({ desc: "", titles: "", social: "", email: "" });
+  const [loading, setLoading] = useState(false);
+  const [done, setDone] = useState(false);
+  const [tab, setTab] = useState("desc");
+  const cfg = TYPE_CFG[data.type];
+
+  const generate = async () => {
+    setLoading(true);
+    const base = `البودكاست: "${data.name}" | النوع: ${TYPE_CFG[data.type].label} | الموضوع: ${data.topic} | المدة: ${data.duration}`;
+    try {
+      const [desc, titles, social] = await Promise.all([
+        apiCall("أنت خبير تسويق بودكاست. ردودك بالعربية.", `${base}\n\nاكتب:\n١- وصف الحلقة (١٥٠–٢٠٠ كلمة) لمنصات Spotify/Anghami — جذاب ويحتوي على الكلمات المفتاحية\n٢- ٥ عناوين بديلة للحلقة — من الأكثر مباشرة للأكثر إثارة`, 1200),
+        apiCall("أنت خبير تسويق بودكاست وسوشيال ميديا. ردودك بالعربية.", `${base}\n\nاكتب محتوى سوشيال ميديا:\n- تغريدة/X: (أقل من ٢٨٠ حرف) مع هاشتاقات\n- إنستغرام: كابشن كامل مع إيموجي وهاشتاقات\n- سناب/تيك توك: نص إعلان مقطع قصير (١٥ ثانية)`, 1000),
+      ]);
+      setOutput({ desc, social, titles: "" });
+      setDone(true);
+    } catch (e) { setOutput({ desc: `خطأ: ${e.message}`, social: "", titles: "" }); setDone(true); }
+    setLoading(false);
+  };
+
+  const tabs = [
+    { k: "desc", label: "الوصف والعناوين" },
+    { k: "social", label: "السوشيال ميديا" },
   ];
 
-  const fields=el("div",{style:{display:"grid",gap:"14px"}},
-    ...FIELDS.map(f=>el("div",null,
-      mkLbl(f.l),
-      mkInp(S.styleForm[f.k]||"",v=>ss({styleForm:{...S.styleForm,[f.k]:v}}),f.ph)
-    )),
-    el("div",null,mkLbl("بناء المحتوى وتدفقه"),
-      mkInp(S.styleForm.structure||"",v=>ss({styleForm:{...S.styleForm,structure:v}}),"كيف تنظم أفكارك...",true,3))
-  );
+  return (
+    <div>
+      <div style={{ marginBottom: "20px" }}>
+        <div style={{ fontSize: "18px", fontWeight: "700", color: C.text, marginBottom: "4px" }}>📣 التسويق</div>
+        <div style={{ color: C.textMuted, fontSize: "12px" }}>وصف الحلقة، عناوين بديلة، ومحتوى السوشيال</div>
+      </div>
 
-  box.append(
-    el("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"18px"}},
-      el("div",null,
-        el("div",{style:{fontSize:"17px",fontWeight:"700",color:C.text}},"✦ ملف أسلوبي"),
-        el("div",{style:{color:C.muted,fontSize:"12px",marginTop:"3px"}},"يُطبَّق تلقائياً في كل سكريبت")
-      ),
-      el("button",{onClick:()=>ss({showStyle:false}),
-        style:{background:"none",border:"none",color:C.muted,fontSize:"20px"}},"✕")
-    ),
-    mkCard([
-      el("div",{style:{fontSize:"12px",color:C.accent,fontWeight:"700",marginBottom:"8px"}},"استخراج تلقائي من سكريبت سابق"),
-      sampleInp,
-      el("div",{style:{marginTop:"10px"}},analyzeBtn)
-    ],{marginBottom:"18px",borderColor:`${C.accent}50`}),
-    fields,
-    el("div",{style:{display:"flex",justifyContent:"space-between",marginTop:"22px"}},
-      mkBtn("إلغاء",()=>ss({showStyle:false}),{outline:true}),
-      mkBtn("حفظ الملف",()=>{
-        localStorage.setItem(SK,JSON.stringify({...S.styleForm,ts:Date.now()}));
-        const sf=S.styleForm;
-        ss({showStyle:false,hasStyle:!!(sf.tone||sf.opening)});
-      },{fill:true,disabled:!(S.styleForm.tone||S.styleForm.opening)})
-    )
+      {!done && !loading && (
+        <Card style={{ textAlign: "center", padding: "44px 24px" }}>
+          <div style={{ fontSize: "36px", marginBottom: "12px" }}>📣</div>
+          <div style={{ color: C.text, fontSize: "15px", fontWeight: "600", marginBottom: "6px" }}>توليد المحتوى التسويقي</div>
+          <div style={{ color: C.textMuted, fontSize: "12px", marginBottom: "24px" }}>وصف، عناوين بديلة، ومنشورات جاهزة</div>
+          <Btn onClick={generate} color={cfg.color}>توليد التسويق</Btn>
+        </Card>
+      )}
+
+      {loading && <Card style={{ textAlign: "center", padding: "44px 24px" }}><Spinner /><div style={{ color: C.textMuted, fontSize: "13px" }}>جارٍ إنشاء المحتوى التسويقي...</div><style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style></Card>}
+
+      {done && (
+        <div>
+          <div style={{ display: "flex", gap: "6px", marginBottom: "16px", borderBottom: `1px solid ${C.border}`, paddingBottom: "0" }}>
+            {tabs.map(t => (
+              <button key={t.k} onClick={() => setTab(t.k)} style={{
+                background: "none", border: "none", borderBottom: `2px solid ${tab === t.k ? C.accent : "transparent"}`,
+                padding: "8px 14px", color: tab === t.k ? C.accent : C.textMuted,
+                fontFamily: "'Noto Kufi Arabic', sans-serif", fontSize: "13px", fontWeight: "700",
+                cursor: "pointer", transition: "all 0.2s",
+              }}>{t.label}</button>
+            ))}
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "10px" }}>
+            <CopyBtn text={tab === "desc" ? output.desc : output.social} small />
+          </div>
+          <OutputBox content={tab === "desc" ? output.desc : output.social} />
+          <div style={{ display: "flex", gap: "8px", marginTop: "12px", justifyContent: "flex-end" }}>
+            <Btn variant="outline" small onClick={generate}>إعادة التوليد</Btn>
+          </div>
+        </div>
+      )}
+
+      <div style={{ display: "flex", justifyContent: "space-between", marginTop: "24px" }}>
+        <Btn variant="outline" onClick={onBack}>← رجوع</Btn>
+        {done && <Btn onClick={onNext} color={cfg.color}>التالي: النشر ←</Btn>}
+      </div>
+    </div>
   );
-  overlay.appendChild(box);return overlay;
 }
 
-// ── CREATE SCREEN ──
-function mkCreateScreen(){
-  const wrap=el("div",null,mkDots(S.step,3));
-  const d=S.form;
-  const cfg=d.type?TYPES[d.type]:{color:C.accent};
+// ─── Step 6: Publish ──────────────────────────────────────────────────────────
+function Step6({ data, script, onSave, onReset, onBack }) {
+  const [link, setLink] = useState("");
+  const [notes, setNotes] = useState("");
+  const [saved, setSaved] = useState(false);
 
-  const styleBlock=()=>{
-    const st=getStyle();if(!Object.keys(st).length)return"";
-    const lines=[st.tone&&"النبرة: "+st.tone,st.opening&&"الافتتاح: "+st.opening,
-      st.language&&"اللغة: "+st.language,st.structure&&"البناء: "+st.structure,
-      st.closing&&"الختام: "+st.closing,st.distinctive&&"البصمة: "+st.distinctive].filter(Boolean);
-    return lines.length?"\n\n--- أسلوب المذيع (التزم به) ---\n"+lines.join("\n")+"\n--------------------------------":"";
+  const save = () => {
+    try {
+      const eps = JSON.parse(localStorage.getItem(EPS_KEY)) || [];
+      eps.unshift({
+        id: Date.now(),
+        podcast: data.name,
+        type: data.type,
+        topic: data.topic,
+        duration: data.duration,
+        frequency: data.frequency,
+        studioType: data.studioType,
+        script: script,
+        link,
+        notes,
+        date: new Date().toISOString(),
+      });
+      localStorage.setItem(EPS_KEY, JSON.stringify(eps.slice(0, 50)));
+      setSaved(true);
+      setTimeout(() => onSave(), 1200);
+    } catch (e) { alert("خطأ في الحفظ"); }
   };
 
-  const buildPrompt=()=>{
-    const h=`البودكاست: "${d.name}" | النوع: ${TYPES[d.type].label} | المدة: ${d.duration} | النشر: ${d.frequency}${styleBlock()}\n\n`;
-    if(d.type==="solo")return h+`الموضوع: ${d.topic}\n\nاكتب سكريبت كامل جاهز للتسجيل مباشرةً:\n١- مقدمة جذابة كاملة\n٢- عرض الموضوع بتفصيل مع انتقالات طبيعية\n٣- تعمق في كل نقطة مع أمثلة وقصص\n٤- خاتمة قوية مع call to action\nضع [توقف] عند الانتقالات. الطول يتناسب مع ${d.duration}.`;
-    if(d.type==="group"){
-      const n=d.hostCount||2;
-      const names=["م١","م٢","م٣","م٤","م٥"].slice(0,n).join("، ");
-      return h+`الموضوع: ${d.topic}\nعدد المذيعين: ${n}\n\nاكتب سكريبت حوار جماعي كامل موزع على (${names}). كل جملة مكتوبة كاملاً. يشمل مقدمة، حوار متدفق مع نقاط توافق وخلاف، وخاتمة مشتركة. الطول يتناسب مع ${d.duration}.`;
-    }
-    return h+`الضيف/الموضوع: ${d.topic}\n\nاكتب قائمة أسئلة احترافية:\n١- ٣ أسئلة تمهيدية\n٢- ٦–٨ أسئلة جوهرية متدرجة\n٣- ٣ أسئلة استفزازية\n٤- سؤال ختامي مميز\nلكل سؤال: السؤال كاملاً + هدفه + أسئلة متابعة.`;
+  return (
+    <div>
+      <div style={{ marginBottom: "20px" }}>
+        <div style={{ fontSize: "18px", fontWeight: "700", color: C.text, marginBottom: "4px" }}>🚀 النشر والحفظ</div>
+        <div style={{ color: C.textMuted, fontSize: "12px" }}>أضف رابط الحلقة واحفظها في أرشيفك</div>
+      </div>
+
+      <Card style={{ marginBottom: "16px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "16px" }}>
+          <TypeBadge type={data.type} />
+          <span style={{ color: C.text, fontWeight: "600" }}>{data.name}</span>
+        </div>
+        <div style={{ color: C.textMuted, fontSize: "12px", display: "flex", gap: "16px" }}>
+          <span>{data.duration}</span>
+          <span>{data.frequency}</span>
+          <span>{data.studioType === "video" ? "🎬 مصوّر" : "🎙 صوتي"}</span>
+        </div>
+      </Card>
+
+      <div style={{ marginBottom: "18px" }}>
+        <Lbl hint="(اختياري)">رابط الحلقة المنشورة</Lbl>
+        <Inp value={link} onChange={setLink} placeholder="https://open.spotify.com/episode/..." />
+      </div>
+
+      <div style={{ marginBottom: "24px" }}>
+        <Lbl hint="(اختياري)">ملاحظات شخصية</Lbl>
+        <Inp value={notes} onChange={setNotes} placeholder="ملاحظات عن الحلقة، أشياء للتحسين، ردود الفعل..." multiline rows={3} />
+      </div>
+
+      <Btn onClick={save} full>{saved ? "✓ تم الحفظ في الأرشيف" : "💾 حفظ الحلقة في الأرشيف"}</Btn>
+
+      <div style={{ display: "flex", justifyContent: "space-between", marginTop: "20px" }}>
+        <Btn variant="outline" onClick={onBack}>← رجوع</Btn>
+        <Btn variant="outline" onClick={onReset}>بودكاست جديد</Btn>
+      </div>
+    </div>
+  );
+}
+
+// ─── Episodes Archive ─────────────────────────────────────────────────────────
+function EpisodesPage({ onClose }) {
+  const [eps, setEps] = useState(() => { try { return JSON.parse(localStorage.getItem(EPS_KEY)) || []; } catch { return []; } });
+  const [selected, setSelected] = useState(null);
+
+  const del = (id) => {
+    const updated = eps.filter(e => e.id !== id);
+    localStorage.setItem(EPS_KEY, JSON.stringify(updated));
+    setEps(updated);
+    if (selected?.id === id) setSelected(null);
   };
 
-  // STEP 0
-  if(S.step===0){
-    wrap.append(
-      el("div",{style:{marginBottom:"22px"}},
-        el("div",{style:{fontSize:"19px",fontWeight:"700",color:C.text,marginBottom:"4px"}},"◎ هوية البودكاست"),
-        el("div",{style:{color:C.muted,fontSize:"13px"}},"ابدأ بتحديد اسم البودكاست وطبيعته")
-      ),
-      el("div",{style:{marginBottom:"16px"}},mkLbl("اسم البودكاست"),
-        mkInp(d.name,v=>ss({form:{...d,name:v}}),"مثال: بودكاست مدى، صوت العقل...")),
-      mkLbl("نوع البودكاست"),
-      el("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"10px",marginBottom:"26px"}},
-        ...Object.entries(TYPES).map(([k,t])=>{
-          const sel=d.type===k;
-          return el("div",{onClick:()=>ss({form:{...d,type:k}}),style:{
-            border:`2px solid ${sel?t.color:C.border}`,borderRadius:"10px",padding:"14px 10px",
-            cursor:"pointer",background:sel?`${t.color}12`:C.bg,transition:"all 0.2s",textAlign:"center"}},
-            el("div",{style:{fontSize:"22px",marginBottom:"5px"}},t.icon),
-            el("div",{style:{fontWeight:"700",fontSize:"13px",color:sel?t.color:C.text,marginBottom:"3px"}},t.label),
-            el("div",{style:{fontSize:"11px",color:C.muted,lineHeight:"1.5"}},t.desc)
-          );
-        })
-      ),
-      el("div",{style:{textAlign:"left"}},
-        mkBtn("التالي ←",()=>ss({step:1}),{fill:true,disabled:!d.name||!d.type}))
-    );
-  }
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "#0a0a0ff2", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200, padding: "16px" }}>
+      <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: "16px", width: "100%", maxWidth: "680px", maxHeight: "92vh", display: "flex", flexDirection: "column" }}>
+        <div style={{ padding: "28px 28px 20px", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <div style={{ fontSize: "18px", fontWeight: "700", color: C.text, marginBottom: "3px" }}>📚 أرشيف الحلقات</div>
+            <div style={{ color: C.textMuted, fontSize: "12px" }}>{eps.length} حلقة محفوظة</div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: C.textMuted, fontSize: "20px", cursor: "pointer" }}>✕</button>
+        </div>
 
-  // STEP 1
-  if(S.step===1){
-    wrap.append(
-      el("div",{style:{display:"flex",alignItems:"center",gap:"10px",marginBottom:"20px"}},
-        mkBadge(d.type),el("span",{style:{fontWeight:"700",color:C.text}},d.name)),
-      el("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"12px",marginBottom:"14px"}},
-        el("div",null,mkLbl("مدة الحلقة"),mkSel(d.duration,v=>ss({form:{...d,duration:v}}),DURS,"اختر المدة")),
-        el("div",null,mkLbl("تكرار النشر"),mkSel(d.frequency,v=>ss({form:{...d,frequency:v}}),FREQS,"كم مرة؟"))
-      )
-    );
-    if(d.type==="group"){
-      wrap.append(el("div",{style:{marginBottom:"14px"}},mkLbl("عدد المذيعين"),
-        el("div",{style:{display:"flex",gap:"8px"}},
-          ...[2,3,4,5].map(n=>el("div",{onClick:()=>ss({form:{...d,hostCount:n}}),style:{
-            border:`2px solid ${d.hostCount===n?cfg.color:C.border}`,borderRadius:"8px",
-            padding:"8px 14px",cursor:"pointer",fontWeight:"700",
-            color:d.hostCount===n?cfg.color:C.muted,
-            background:d.hostCount===n?`${cfg.color}15`:"transparent"}},""+n))
-        )
-      ));
-    }
-    wrap.append(
-      el("div",{style:{marginBottom:"20px"}},
-        mkLbl(d.type==="solo"?"الموضوع أو الفكرة الكاملة":d.type==="group"?"موضوع النقاش وأبرز المحاور":"موضوع الحلقة وتفاصيل الضيف"),
-        mkInp(d.topic,v=>ss({form:{...d,topic:v}}),
-          d.type==="solo"?"اكتب الفكرة بشكل موسع...":d.type==="group"?"ما الموضوع الذي ستناقشونه؟":"من الضيف؟ وما المحور؟",
-          true,5)
-      ),
-      el("div",{style:{display:"flex",justifyContent:"space-between"}},
-        mkBtn("← رجوع",()=>ss({step:0}),{outline:true}),
-        mkBtn("توليد السكريبت ←",()=>ss({step:2}),{fill:true,disabled:!d.duration||!d.frequency||!d.topic})
-      )
-    );
-  }
-
-  // STEP 2
-  if(S.step===2){
-    wrap.append(
-      el("div",{style:{display:"flex",alignItems:"center",gap:"10px",marginBottom:"5px"}},
-        mkBadge(d.type),el("span",{style:{fontWeight:"700",color:C.text,fontSize:"15px"}},d.name)),
-      el("div",{style:{color:C.muted,fontSize:"12px",marginBottom:"18px"}},d.duration+" · "+d.frequency)
-    );
-
-    if(!S.script&&!S.scriptBusy){
-      wrap.append(mkCard([
-        el("div",{style:{fontSize:"30px",marginBottom:"10px",textAlign:"center"}},
-          d.type==="solo"?"✦":d.type==="group"?"⬡":"◈"),
-        el("div",{style:{fontWeight:"700",fontSize:"14px",color:C.text,marginBottom:"5px",textAlign:"center"}},
-          "جاهز لتوليد "+(d.type==="solo"?"السكريبت":d.type==="group"?"سكريبت الحوار":"أسئلة الحلقة")),
-        el("div",{style:{color:C.muted,fontSize:"12px",marginBottom:"22px",textAlign:"center"}},
-          Object.keys(getStyle()).length?"سيتم الكتابة بأسلوبك الشخصي":"سيتم التوليد بناءً على معلوماتك"),
-        el("div",{style:{textAlign:"center"}},
-          mkBtn("توليد المحتوى",async()=>{
-            ss({scriptBusy:true,script:""});
-            try{
-              const text=await ai("أنت خبير بودكاست عربي. تكتب سكريبتات كاملة جاهزة للتسجيل. إذا وُجد ملف أسلوب، التزم به في كل جملة. ردودك بالعربية.",buildPrompt());
-              const ep={id:Date.now()+"",name:d.name,type:d.type,duration:d.duration,
-                frequency:d.frequency,topic:d.topic,script:text,hostCount:d.hostCount,
-                createdAt:new Date().toISOString()};
-              saveEp(ep);
-              ss({script:text,scriptBusy:false,episode:ep,eps:getEps()});
-            }catch(e){ss({script:"خطأ: "+e.message,scriptBusy:false});}
-          },{fill:true,color:cfg.color}))
-      ]));
-    }
-
-    if(S.scriptBusy)wrap.append(mkSpin());
-
-    if(S.script&&!S.scriptBusy){
-      wrap.append(
-        el("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px"}},
-          mkLbl("السكريبت المولّد"),mkCopyBtn(S.script)),
-        mkOut(S.script),
-        el("div",{style:{display:"flex",gap:"8px",marginTop:"10px",justifyContent:"flex-end"}},
-          mkBtn("إعادة التوليد",async()=>{
-            ss({scriptBusy:true,script:""});
-            try{
-              const text=await ai("أنت خبير بودكاست عربي. تكتب سكريبتات كاملة جاهزة للتسجيل. إذا وُجد ملف أسلوب، التزم به. ردودك بالعربية.",buildPrompt());
-              ss({script:text,scriptBusy:false});
-            }catch(e){ss({script:"خطأ: "+e.message,scriptBusy:false});}
-          },{outline:true,small:true})
-        ),
-        mkNextBanner("السكريبت جاهز","الخطوة التالية: نصائح الإنتاج","الإنتاج",()=>ss({tab:"production"}))
-      );
-    }
-
-    wrap.append(el("div",{style:{display:"flex",justifyContent:"space-between",marginTop:"14px"}},
-      mkBtn("← رجوع",()=>ss({step:1}),{outline:true}),
-      mkBtn("حلقة جديدة",()=>ss({step:0,form:{name:"",type:"",duration:"",frequency:"",topic:"",hostCount:2},script:""}),{outline:true})
-    ));
-  }
-  return wrap;
+        <div style={{ flex: 1, overflowY: "auto", padding: "20px 28px" }}>
+          {eps.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "60px 0", color: C.textMuted, fontSize: "14px" }}>
+              <div style={{ fontSize: "40px", marginBottom: "12px" }}>📭</div>
+              لا توجد حلقات محفوظة بعد
+            </div>
+          ) : selected ? (
+            <div>
+              <button onClick={() => setSelected(null)} style={{ background: "none", border: "none", color: C.textMuted, fontSize: "13px", cursor: "pointer", marginBottom: "16px", padding: 0 }}>← العودة للقائمة</button>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                <TypeBadge type={selected.type} />
+                <span style={{ fontSize: "16px", fontWeight: "700", color: C.text }}>{selected.podcast}</span>
+              </div>
+              <div style={{ color: C.textMuted, fontSize: "12px", marginBottom: "16px" }}>
+                {new Date(selected.date).toLocaleDateString("ar")} · {selected.duration} · {selected.studioType === "video" ? "🎬 مصوّر" : "🎙 صوتي"}
+              </div>
+              {selected.link && (
+                <div style={{ marginBottom: "16px" }}>
+                  <Lbl>رابط الحلقة</Lbl>
+                  <a href={selected.link} target="_blank" rel="noreferrer" style={{ color: C.accent, fontSize: "13px", wordBreak: "break-all" }}>{selected.link}</a>
+                </div>
+              )}
+              <Lbl>الموضوع</Lbl>
+              <div style={{ color: C.text, fontSize: "13px", marginBottom: "16px", lineHeight: "1.7" }}>{selected.topic}</div>
+              {selected.script && (
+                <div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+                    <Lbl>السكريبت</Lbl>
+                    <CopyBtn text={selected.script} small />
+                  </div>
+                  <OutputBox content={selected.script} />
+                </div>
+              )}
+              {selected.notes && (
+                <div style={{ marginTop: "16px" }}>
+                  <Lbl>ملاحظات</Lbl>
+                  <div style={{ color: C.textMuted, fontSize: "13px", lineHeight: "1.7" }}>{selected.notes}</div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div style={{ display: "grid", gap: "10px" }}>
+              {eps.map(ep => (
+                <div key={ep.id} onClick={() => setSelected(ep)} style={{
+                  background: C.card, border: `1px solid ${C.border}`, borderRadius: "10px",
+                  padding: "16px 18px", cursor: "pointer", transition: "border-color 0.2s",
+                  display: "flex", justifyContent: "space-between", alignItems: "center",
+                }}>
+                  <div>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
+                      <TypeBadge type={ep.type} />
+                      <span style={{ color: C.text, fontWeight: "700", fontSize: "14px" }}>{ep.podcast}</span>
+                    </div>
+                    <div style={{ color: C.textMuted, fontSize: "12px" }}>
+                      {ep.topic.slice(0, 60)}{ep.topic.length > 60 ? "..." : ""} · {new Date(ep.date).toLocaleDateString("ar")}
+                    </div>
+                    {ep.link && <div style={{ color: C.accent, fontSize: "11px", marginTop: "4px" }}>🔗 منشور</div>}
+                  </div>
+                  <button onClick={e => { e.stopPropagation(); del(ep.id); }} style={{ background: "none", border: "none", color: C.textDim, fontSize: "16px", cursor: "pointer", padding: "4px 8px" }}>✕</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }
 
-// ── PRODUCTION ──
-function mkProductionScreen(){
-  const wrap=el("div",null,
-    el("div",{style:{marginBottom:"22px"}},
-      el("div",{style:{fontSize:"19px",fontWeight:"700",color:C.text,marginBottom:"4px"}},"◉ نصائح الإنتاج"),
-      el("div",{style:{color:C.muted,fontSize:"13px"}},"اختر نوع الاستوديو للحصول على توصيات مخصصة")
-    )
-  );
-  if(!S.episode)wrap.append(mkCard([el("div",{style:{color:C.muted,fontSize:"14px",textAlign:"center"}},'أنشئ حلقة أولاً من صفحة "إنشاء"')],{marginBottom:"16px"}));
+// ─── Root ─────────────────────────────────────────────────────────────────────
+export default function App() {
+  const [step, setStep] = useState(0);
+  const [showStyle, setShowStyle] = useState(false);
+  const [showEps, setShowEps] = useState(false);
+  const [hasStyle, setHasStyle] = useState(false);
+  const [epCount, setEpCount] = useState(0);
+  const [script, setScript] = useState("");
+  const [data, setData] = useState({ name: "", type: "", duration: "", frequency: "", topic: "", hostCount: 2, studioType: "" });
 
-  wrap.append(
-    mkLbl("نوع الاستوديو"),
-    el("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"10px",marginBottom:"18px"}},
-      ...[{id:"audio",icon:"🎙️",label:"صوتي فقط",desc:"ميكروفون وتسجيل صوتي"},
-          {id:"video",icon:"🎥",label:"مصوَّر",desc:"كاميرا وإضاءة ومونتاج"}].map(f=>
-        el("div",{onClick:()=>ss({prodFmt:f.id}),style:{
-          border:`2px solid ${S.prodFmt===f.id?C.accent:C.border}`,borderRadius:"10px",padding:"18px",
-          cursor:"pointer",background:S.prodFmt===f.id?C.accentGlow:C.bg,transition:"all 0.2s",textAlign:"center"}},
-          el("div",{style:{fontSize:"26px",marginBottom:"7px"}},f.icon),
-          el("div",{style:{fontWeight:"700",fontSize:"14px",marginBottom:"3px",
-            color:S.prodFmt===f.id?C.accent:C.text}},f.label),
-          el("div",{style:{fontSize:"12px",color:C.muted}},f.desc)
-        )
-      )
-    ),
-    mkBtn(S.prodBusy?"جارٍ التوليد...":"توليد نصائح الإنتاج",async()=>{
-      if(!S.prodFmt||S.prodBusy)return;
-      ss({prodBusy:true,prodResult:""});
-      const ep=S.episode,t=ep?.type||"solo",isA=S.prodFmt==="audio";
-      const prompt=isA
-        ?`البودكاست: ${ep?.name||"—"} | النوع: ${TYPES[t]?.label} | الموضوع: ${ep?.topic||"—"}\n\nأعطِ نصائح مفصّلة للتسجيل الصوتي:\n\n🎙️ وضع الميكروفون: المسافة المثالية بالسنتيمترات والزاوية. الفرق بين الديناميكي والكوندنسر.\n\n📍 المكان والمعالجة الصوتية: خصائص الغرفة المثالية. طرق عزل الصوت منخفضة التكلفة. ما يجب تجنبه.\n\n🎚️ التحرير الصوتي: برامج موصى بها. إعدادات EQ والضغط. إزالة الضوضاء والصمت.\n\n🎵 الموسيقى المرافقة: نوع الموسيقى المناسب لهذا البودكاست تحديداً. مواقع مجانية. توقيت الاستخدام مع أحجام صوت مقترحة.`
-        :`البودكاست: ${ep?.name||"—"} | النوع: ${TYPES[t]?.label} | الموضوع: ${ep?.topic||"—"}\n\nأعطِ نصائح مفصّلة لتصوير هذا البودكاست (${t==="solo"?"مذيع فردي":t==="group"?(ep?.hostCount||2)+" مذيعين":"مذيع وضيف"}):\n\n📷 الكاميرات: عدد الكاميرات وزوايا كل منها. المسافة البؤرية. إعدادات التعرض.\n\n💡 الإضاءة: مخطط Key/Fill/Back. درجات الحرارة بـ Kelvin. بدائل منخفضة التكلفة.\n\n🎨 الديكور والخلفية: اقتراحات تتناسب مع موضوع البودكاست. ما يجب تجنبه.\n\n✂️ المونتاج: برامج مقترحة. إعدادات التصدير لكل منصة.\n\n🎵 الموسيقى المرافقة: نوع الموسيقى المناسب. توقيت استخدامها.`;
-      try{
-        const text=await ai("أنت خبير إنتاج بودكاست عربي. أجب بالعربية بشكل مفصّل وعملي.",prompt);
-        ss({prodResult:text,prodBusy:false});
-      }catch(e){ss({prodResult:"خطأ: "+e.message,prodBusy:false});}
-    },{fill:true,full:true,disabled:!S.prodFmt||S.prodBusy})
-  );
-
-  if(S.prodBusy)wrap.append(mkSpin());
-  if(S.prodResult&&!S.prodBusy){
-    wrap.append(el("div",{style:{marginTop:"16px"}},
-      el("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px"}},
-        mkLbl("توصيات الإنتاج"),mkCopyBtn(S.prodResult)),
-      mkOut(S.prodResult),
-      mkNextBanner("نصائح الإنتاج جاهزة","الخطوة التالية: التسويق والنشر","التسويق",()=>ss({tab:"marketing"}))
-    ));
-  }
-  return wrap;
-}
-
-// ── MARKETING ──
-function mkMarketingScreen(){
-  const MTABS=[{id:"description",l:"وصف الحلقة"},{id:"social",l:"السوشيال"},
-    {id:"email",l:"نشرة بريدية"},{id:"titles",l:"عناوين بديلة"}];
-
-  const genMkt=async(t)=>{
-    if(!S.episode)return;
-    ss({mktBusy:t});
-    const ep=S.episode;
-    const base=`البودكاست: "${ep.name}" | النوع: ${TYPES[ep.type]?.label}\nالموضوع: ${ep.topic}\n${S.mktLink?"رابط الحلقة: "+S.mktLink:""}\n\n`;
-    const prompts={
-      description:base+"اكتب وصفاً احترافياً للحلقة لـ Spotify وAnghami وApple Podcasts:\n- ٣–٥ فقرات\n- جملة تشويقية قوية\n- ما سيستفيده المستمع\n- كلمات مفتاحية\n- دعوة للاشتراك",
-      social:base+"اكتب محتوى السوشيال:\n١. تغريدة X (أقل من 280 حرف)\n٢. منشور انستقرام مع هاشتاقات\n٣. منشور لينكدإن\n٤. اقتباس للتصميم الجرافيكي",
-      email:base+"اكتب نشرة بريدية:\n- سطر موضوع جذاب\n- مقدمة ترحيب\n- ملخص ٣ نقاط\n- أبرز اقتباس\n- رابط للاستماع\n- خاتمة ودية",
-      titles:base+"اقترح ١٠ عناوين بديلة:\n- ٣ تثير الفضول\n- ٣ تركز على الفائدة\n- ٢ تستخدم الأرقام\n- ٢ قصيرة ومباشرة\nلكل عنوان: سبب اختياره.",
-    };
-    try{
-      const text=await ai("أنت خبير تسويق بودكاست عربي. ردودك بالعربية.",prompts[t]);
-      ss({mktOuts:{...S.mktOuts,[t]:text},mktBusy:""});
-    }catch(e){ss({mktOuts:{...S.mktOuts,[t]:"خطأ: "+e.message},mktBusy:""});}
+  const checkStorage = () => {
+    try {
+      const s = JSON.parse(localStorage.getItem(STYLE_KEY));
+      setHasStyle(!!(s && (s.tone || s.opening || s.structure)));
+      const ep = JSON.parse(localStorage.getItem(EPS_KEY)) || [];
+      setEpCount(ep.length);
+    } catch { }
   };
 
-  const wrap=el("div",null,
-    el("div",{style:{marginBottom:"20px"}},
-      el("div",{style:{fontSize:"19px",fontWeight:"700",color:C.text,marginBottom:"4px"}},"◐ التسويق والنشر"),
-      el("div",{style:{color:C.muted,fontSize:"13px"}},"توليد محتوى تسويقي جاهز لكل المنصات")
-    ),
-    el("div",{style:{marginBottom:"16px"}},mkLbl("رابط الحلقة (اختياري)"),
-      mkInp(S.mktLink,v=>ss({mktLink:v}),"https://open.spotify.com/episode/...")),
+  useEffect(() => { checkStorage(); }, []);
+
+  const reset = () => {
+    setStep(0);
+    setScript("");
+    setData({ name: "", type: "", duration: "", frequency: "", topic: "", hostCount: 2, studioType: "" });
+  };
+
+  const STEPS = 6;
+
+  return (
+    <div style={{ minHeight: "100vh", background: C.bg, fontFamily: "'Noto Kufi Arabic','Segoe UI',sans-serif", direction: "rtl", display: "flex", flexDirection: "column", alignItems: "center", padding: "32px 16px" }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Kufi+Arabic:wght@400;600;700&display=swap');
+        * { box-sizing: border-box; }
+        textarea:focus, input:focus, select:focus { border-color: #c8a96e !important; outline: none; }
+        ::-webkit-scrollbar { width: 5px; }
+        ::-webkit-scrollbar-track { background: #12121a; }
+        ::-webkit-scrollbar-thumb { background: #2a2a3e; border-radius: 3px; }
+        button:not(:disabled):hover { opacity: 0.82; }
+      `}</style>
+
+      {showStyle && <StyleModal onClose={() => { setShowStyle(false); checkStorage(); }} />}
+      {showEps && <EpisodesPage onClose={() => { setShowEps(false); checkStorage(); }} />}
+
+      {/* Header */}
+      <div style={{ width: "100%", maxWidth: "620px", marginBottom: "28px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: "8px", background: C.surface, border: `1px solid ${C.border}`, borderRadius: "100px", padding: "4px 14px", marginBottom: "12px" }}>
+              <div style={{ width: "5px", height: "5px", borderRadius: "50%", background: C.accent, boxShadow: `0 0 7px ${C.accent}` }} />
+              <span style={{ color: C.textMuted, fontSize: "10px", letterSpacing: "0.12em" }}>PODCAST STUDIO</span>
+            </div>
+            <div style={{ fontSize: "24px", fontWeight: "700", color: C.text, marginBottom: "3px" }}>استوديو البودكاست</div>
+            <div style={{ color: C.textMuted, fontSize: "12px" }}>من الفكرة إلى النشر</div>
+          </div>
+
+          <div style={{ display: "flex", gap: "8px" }}>
+            {/* Episodes */}
+            <button onClick={() => setShowEps(true)} style={{
+              background: C.surface, border: `1px solid ${C.border}`, borderRadius: "10px",
+              padding: "10px 14px", cursor: "pointer", color: C.textMuted,
+              fontFamily: "'Noto Kufi Arabic', sans-serif", fontSize: "12px", fontWeight: "700", textAlign: "center",
+            }}>
+              <div style={{ fontSize: "18px", marginBottom: "3px" }}>📚</div>
+              <div>الأرشيف</div>
+              {epCount > 0 && <div style={{ fontSize: "10px", color: C.accent, marginTop: "2px" }}>{epCount}</div>}
+            </button>
+
+            {/* Style */}
+            <button onClick={() => setShowStyle(true)} style={{
+              background: hasStyle ? C.accentGlow : C.surface,
+              border: `1px solid ${hasStyle ? C.accent : C.border}`,
+              borderRadius: "10px", padding: "10px 14px", cursor: "pointer",
+              color: hasStyle ? C.accent : C.textMuted,
+              fontFamily: "'Noto Kufi Arabic', sans-serif", fontSize: "12px", fontWeight: "700", textAlign: "center",
+            }}>
+              <div style={{ fontSize: "18px", marginBottom: "3px" }}>✦</div>
+              <div>أسلوبي</div>
+              <div style={{ fontSize: "10px", marginTop: "2px", opacity: 0.7 }}>{hasStyle ? "مفعّل" : "غير مُعدّ"}</div>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Main Card */}
+      <div style={{ width: "100%", maxWidth: "620px" }}>
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: "16px", padding: "32px" }}>
+          <StepDots current={step} total={STEPS} />
+          {step === 0 && <Step1 data={data} setData={setData} onNext={() => setStep(1)} />}
+          {step === 1 && <Step2 data={data} setData={setData} onNext={() => setStep(2)} onBack={() => setStep(0)} />}
+          {step === 2 && <Step3 data={data} onNext={s => { setScript(s); setStep(3); }} onBack={() => setStep(1)} />}
+          {step === 3 && <Step4 data={data} script={script} onNext={() => setStep(4)} onBack={() => setStep(2)} />}
+          {step === 4 && <Step5 data={data} script={script} onNext={() => setStep(5)} onBack={() => setStep(3)} />}
+          {step === 5 && <Step6 data={data} script={script} onSave={() => { checkStorage(); reset(); }} onReset={reset} onBack={() => setStep(4)} />}
+        </div>
+      </div>
+
+      <div style={{ color: C.textDim, fontSize: "10px", marginTop: "20px" }}>
+        المحتوى المولد للاسترشاد والتعديل — راجع دائماً قبل التسجيل
+      </div>
+    </div>
   );
-
-  if(!S.episode)wrap.append(mkCard([el("div",{style:{color:C.muted,fontSize:"14px",textAlign:"center"}},'أنشئ حلقة أولاً من صفحة "إنشاء"')],{marginBottom:"16px"}));
-
-  wrap.append(
-    el("div",{style:{display:"flex",gap:"3px",background:C.bg,border:`1px solid ${C.border}`,
-      borderRadius:"8px",padding:"3px",marginBottom:"16px"}},
-      ...MTABS.map(t=>el("button",{onClick:()=>ss({mktTab:t.id}),style:{
-        flex:"1",background:S.mktTab===t.id?C.surface:"transparent",
-        border:S.mktTab===t.id?`1px solid ${C.border}`:"1px solid transparent",
-        borderRadius:"6px",padding:"7px 4px",color:S.mktTab===t.id?C.text:C.muted,
-        fontWeight:"600",fontSize:"11px",whiteSpace:"nowrap"}},t.l))
-    ),
-    mkBtn(S.mktBusy===S.mktTab?"جارٍ التوليد...":"توليد "+MTABS.find(t=>t.id===S.mktTab)?.l,
-      ()=>genMkt(S.mktTab),{fill:true,full:true,disabled:!S.episode||!!S.mktBusy})
-  );
-
-  if(S.mktBusy===S.mktTab)wrap.append(mkSpin());
-  if(S.mktOuts[S.mktTab]&&S.mktBusy!==S.mktTab){
-    wrap.append(el("div",{style:{marginTop:"14px"}},
-      el("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px"}},
-        mkLbl(MTABS.find(t=>t.id===S.mktTab)?.l),mkCopyBtn(S.mktOuts[S.mktTab])),
-      mkOut(S.mktOuts[S.mktTab])
-    ));
-  }
-
-  wrap.append(el("div",{style:{marginTop:"20px",borderTop:`1px solid ${C.border}`,paddingTop:"18px"}},
-    el("div",{style:{fontSize:"12px",color:C.muted,marginBottom:"10px"}},"حفظ كل محتوى الحلقة في ملف واحد"),
-    mkBtn("⬇ تنزيل ملف الحلقة",()=>{
-      if(!S.episode)return;
-      const ep=S.episode;
-      const content=["# "+ep.name,"**الموضوع:** "+ep.topic,
-        "**النوع:** "+TYPES[ep.type]?.label,"**المدة:** "+ep.duration,
-        S.mktLink?"**رابط:** "+S.mktLink:"","---","","## السكريبت",ep.script||"—","",
-        S.mktOuts.description?"## الوصف\n"+S.mktOuts.description:"",
-        S.mktOuts.social?"## السوشيال\n"+S.mktOuts.social:"",
-        S.mktOuts.email?"## النشرة\n"+S.mktOuts.email:"",
-        S.mktOuts.titles?"## العناوين البديلة\n"+S.mktOuts.titles:"",
-      ].filter(Boolean).join("\n");
-      const blob=new Blob([content],{type:"text/plain;charset=utf-8"});
-      const url=URL.createObjectURL(blob);
-      const a=document.createElement("a");
-      a.href=url;a.download=(ep.name||"podcast")+".md";a.click();
-      URL.revokeObjectURL(url);
-      ss({mktDlDone:true});
-    },{outline:true,full:true,disabled:!S.episode}),
-    S.mktDlDone?mkNextBanner("الحلقة مكتملة","شاهد جميع حلقاتك المحفوظة","حلقاتي",()=>ss({tab:"episodes"}),C.ok):null
-  ));
-  return wrap;
 }
-
-// ── EPISODES ──
-function mkEpisodesScreen(){
-  const eps=S.eps;
-  const wrap=el("div",null,
-    el("div",{style:{marginBottom:"20px"}},
-      el("div",{style:{fontSize:"19px",fontWeight:"700",color:C.text,marginBottom:"4px"}},"▦ حلقاتي"),
-      el("div",{style:{color:C.muted,fontSize:"13px"}},eps.length+" حلقة محفوظة")
-    )
-  );
-  if(!eps.length)return wrap.appendChild(mkCard([
-    el("div",{style:{fontSize:"28px",marginBottom:"10px",textAlign:"center"}},"◌"),
-    el("div",{style:{color:C.muted,fontSize:"14px",textAlign:"center"}},'لا توجد حلقات — ابدأ من صفحة "إنشاء"')
-  ],{padding:"40px"})),wrap;
-
-  wrap.append(el("div",{style:{display:"grid",gap:"10px"}},
-    ...eps.map(ep=>mkCard([
-      el("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"7px"}},
-        el("div",null,
-          el("div",{style:{fontWeight:"700",color:C.text,fontSize:"14px",marginBottom:"4px"}},ep.name),
-          el("div",{style:{display:"flex",gap:"7px",alignItems:"center"}},mkBadge(ep.type),
-            el("span",{style:{color:C.muted,fontSize:"11px"}},ep.duration))
-        ),
-        el("button",{onClick:()=>{
-          const u=eps.filter(e=>e.id!==ep.id);
-          localStorage.setItem(EK,JSON.stringify(u));ss({eps:u});
-        },style:{background:"none",border:"none",color:C.dim,fontSize:"15px"}},"✕")
-      ),
-      el("div",{style:{color:C.muted,fontSize:"12px",marginBottom:"9px",lineHeight:"1.5"}},
-        (ep.topic||"").slice(0,100)+((ep.topic||"").length>100?"...":"")),
-      el("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center"}},
-        el("span",{style:{fontSize:"11px",color:C.dim}},new Date(ep.createdAt).toLocaleDateString("ar-SA")),
-        mkBtn("تحميل",()=>ss({episode:ep,tab:"create",step:2,
-          script:ep.script,form:{name:ep.name,type:ep.type,duration:ep.duration,
-          frequency:ep.frequency,topic:ep.topic,hostCount:ep.hostCount||2}}),{fill:true,small:true})
-      )
-    ],{padding:"16px"}))
-  ));
-  return wrap;
-}
-
-render();
-</script>
-</body>
-</html>
